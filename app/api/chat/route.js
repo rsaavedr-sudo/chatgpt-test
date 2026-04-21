@@ -110,7 +110,7 @@ export async function POST(req) {
     const input = [
       {
         role: "system",
-        content: buildSystemPrompt(agent),
+        content: buildSystemPrompt(agent) + "\n\n" + (agent.extraPrompt || ""),
       },
       ...previousMessages,
       {
