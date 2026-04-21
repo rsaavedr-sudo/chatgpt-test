@@ -1,32 +1,98 @@
-import fs from "fs";
-import path from "path";
+import { createClient } from "@supabase/supabase-js";
 
-const filePath = path.join(process.cwd(), "data", "agents.json");
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
 
 export async function GET() {
-  try {
-    const fileContent = fs.readFileSync(filePath, "utf-8");
-    const agents = JSON.parse(fileContent);
+  const { data, error } = await supabase
+    .from("agents")
+    .select("*")
+    .order("created_at", { ascending: true });
 
-    return Response.json(agents);
-  } catch (error) {
+  if (error) {
+    console.error("GET error:", error);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+
+  return Response.json(data);
+}
+
+export async function POST(req) {
+  try {
+    const body = await req.json();
+
+    const { data, error } = await supabase
+      .from("agents")
+      .insert([body])
+      .select();
+
+    if (error) {
+      console.error("POST error:", error);
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+
+    return Response.json(data[0]);
+  } catch (err) {
+    console.error("POST crash:", err);
     return Response.json(
-      { error: "Erro ao carregar agentes" },
+      { error: err.message || "Erro ao criar agente" },
       { status: 500 }
     );
   }
 }
 
-export async function POST(req) {
+export async function PUT(req) {
   try {
-    const agents = await req.json();
+    const body = await req.json();
+    const { id, ...rest } = body;
 
-    fs.writeFileSync(filePath, JSON.stringify(agents, null, 2), "utf-8");
+    const { data, error } = await supabase
+      .from("agents")
+      .update(rest)
+      .eq("id", id)
+      .select();
 
-    return Response.json({ ok: true });
-  } catch (error) {
+    if (error) {
+      console.error("PUT error:", error);
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+
+    return Response.json(data[0]);
+  } catch (err) {
+    console.error("PUT crash:", err);
     return Response.json(
-      { error: "Erro ao salvar agentes" },
+      { error: err.message || "Erro ao atualizar agente" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(req) {
+  try {
+    const body = await req.json();
+    const { id } = body;
+
+    if (!id) {
+      return Response.json({ error: "ID ausente" }, { status: 400 });
+    }
+
+    const { error } = await supabase
+      .from("agents")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error("DELETE error:", error);
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+
+    return Response.json({ success: true });
+  } catch (err) {
+    console.error("DELETE crash:", err);
+    return Response.json(
+      { error: err.message || "Erro ao excluir agente" },
       { status: 500 }
     );
   }

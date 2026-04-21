@@ -1,15 +1,20 @@
 import OpenAI from "openai";
-import fs from "fs";
-import path from "path";
+import { createClient } from "@supabase/supabase-js";
 
-const client = new OpenAI({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-function loadAgents() {
-  const filePath = path.join(process.cwd(), "data", "agents.json");
-  const fileContent = fs.readFileSync(filePath, "utf-8");
-  return JSON.parse(fileContent);
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
+
+function normalizeUuid(value) {
+  return String(value || "")
+    .replace(/[^a-f0-9-]/gi, "")
+    .trim()
+    .toLowerCase();
 }
 
 function buildSystemPrompt(agent) {
@@ -17,22 +22,22 @@ function buildSystemPrompt(agent) {
 Você é ${agent.name}.
 
 IDIOMA:
-${agent.language}
+${agent.language || "Português do Brasil"}
 
 PAPEL:
-${agent.role}
+${agent.role || "Assistente"}
 
 OBJETIVO:
-${agent.objective}
+${agent.objective || "Ajudar o usuário"}
 
 TOM:
-${agent.tone}
+${agent.tone || "Claro e direto"}
 
 INSTRUÇÕES:
-${agent.instructions}
+${agent.instructions || "Responda com clareza"}
 
 LIMITES:
-${agent.limits}
+${agent.limits || "Não invente informações"}
 
 PROMPT ADICIONAL:
 ${agent.extraPrompt || "Nenhum"}
@@ -49,39 +54,85 @@ REGRAS:
 
 export async function POST(req) {
   try {
-    const { message, model, agentId } = await req.json();
+    const body = await req.json();
+    const { message, model, agentId, history = [] } = body;
 
-    const agents = loadAgents();
-    const selectedAgent =
-      agents.find((agent) => agent.id === agentId) || agents[0];
+    if (!message) {
+      return Response.json(
+        { error: "Mensagem ausente" },
+        { status: 400 }
+      );
+    }
 
-    const selectedModel =
-      model || selectedAgent.model || "gpt-4.1-mini";
+    if (!agentId) {
+      return Response.json(
+        { error: "agentId ausente" },
+        { status: 400 }
+      );
+    }
 
-    const response = await client.responses.create({
+    const cleanAgentId = normalizeUuid(agentId);
+
+    const { data: agents, error: agentsError } = await supabase
+      .from("agents")
+      .select("*");
+
+    if (agentsError) {
+      return Response.json(
+        { error: agentsError.message },
+        { status: 500 }
+      );
+    }
+
+    const normalizedAgents = (agents || []).map((item) => ({
+      ...item,
+      normalizedId: normalizeUuid(item.id),
+    }));
+
+    const agent = normalizedAgents.find(
+      (item) => item.normalizedId === cleanAgentId
+    );
+
+    if (!agent) {
+      return Response.json(
+        { error: "Agente não encontrado" },
+        { status: 404 }
+      );
+    }
+
+    const selectedModel = model || agent.model || "gpt-4.1-mini";
+
+    const previousMessages = history.map((item) => ({
+      role: item.role === "assistant" ? "assistant" : "user",
+      content: item.text,
+    }));
+
+    const input = [
+      {
+        role: "system",
+        content: buildSystemPrompt(agent),
+      },
+      ...previousMessages,
+      {
+        role: "user",
+        content: message,
+      },
+    ];
+
+    const response = await openai.responses.create({
       model: selectedModel,
-      input: [
-        {
-          role: "system",
-          content: buildSystemPrompt(selectedAgent),
-        },
-        {
-          role: "user",
-          content: message,
-        },
-      ],
+      input,
     });
 
     return Response.json({
       reply: response.output_text,
-      agentName: selectedAgent.name,
+      agentName: agent.name,
       usedModel: selectedModel,
     });
   } catch (error) {
+    console.error("CHAT ERROR:", error);
     return Response.json(
-      {
-        error: error.message || "Erro ao processar a mensagem",
-      },
+      { error: error?.message || "Erro ao processar a mensagem" },
       { status: 500 }
     );
   }
